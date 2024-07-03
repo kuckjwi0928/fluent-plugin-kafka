@@ -393,7 +393,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
         raise RuntimeError, "Exceeds retry_emit_limit"
       end
     rescue => e
-      log.warn "tag checkpoint: #{@tag_offset_checkpoint[tag]}"
+      log.warn "#{@tag} kafka message offset: #{@tag_offset_checkpoint[tag]}"
       raise e
     end
   end
