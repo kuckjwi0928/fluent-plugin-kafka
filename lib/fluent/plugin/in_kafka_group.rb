@@ -94,10 +94,11 @@ class Fluent::KafkaGroupInput < Fluent::Input
 
     @time_parser = nil
     @retry_count = 1
+    @tag_offset_checkpoint = {}
   end
 
   def _config_to_array(config)
-    config_array = config.split(',').map {|k| k.strip }
+    config_array = config.split(',').map { |k| k.strip }
     if config_array.empty?
       raise Fluent::ConfigError, "kafka_group: '#{config}' is a required parameter"
     end
@@ -114,7 +115,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
     super
 
     $log.info "Will watch for topics #{@topics} at brokers " \
-              "#{@brokers} and '#{@consumer_group}' group"
+                "#{@brokers} and '#{@consumer_group}' group"
 
     @topics = _config_to_array(@topics)
 
@@ -125,7 +126,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
 
     @parser_proc = setup_parser(conf)
 
-    @consumer_opts = {:group_id => @consumer_group}
+    @consumer_opts = { :group_id => @consumer_group }
     @consumer_opts[:session_timeout] = @session_timeout if @session_timeout
     @consumer_opts[:offset_commit_interval] = @offset_commit_interval if @offset_commit_interval
     @consumer_opts[:offset_commit_threshold] = @offset_commit_threshold if @offset_commit_threshold
@@ -164,17 +165,17 @@ class Fluent::KafkaGroupInput < Fluent::Input
       end
     when 'ltsv'
       require 'ltsv'
-      Proc.new { |msg| LTSV.parse(msg.value, {:symbolize_keys => false}).first }
+      Proc.new { |msg| LTSV.parse(msg.value, { :symbolize_keys => false }).first }
     when 'msgpack'
       require 'msgpack'
       Proc.new { |msg| MessagePack.unpack(msg.value) }
     when 'text'
-      Proc.new { |msg| {@message_key => msg.value} }
+      Proc.new { |msg| { @message_key => msg.value } }
     else
       @custom_parser = Fluent::Plugin.new_parser(conf['format'])
       @custom_parser.configure(conf)
       Proc.new { |msg|
-        @custom_parser.parse(msg.value) {|_time, record|
+        @custom_parser.parse(msg.value) { |_time, record|
           record
         }
       }
@@ -250,7 +251,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
     @consumer = setup_consumer
     log.warn "Re-starting consumer #{Time.now.to_s}"
     @retry_count = 0
-  rescue =>e
+  rescue => e
     log.error "unexpected error during re-starting consumer object access", :error => e.to_s
     log.error_backtrace
     if @retry_count <= @retry_limit or disable_retry_limit
@@ -259,7 +260,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
   end
 
   def process_batch_with_record_tag(batch)
-    es = {} 
+    es = {}
     batch.messages.each { |msg|
       begin
         record = @parser_proc.call(msg)
@@ -290,6 +291,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
           }
         end
         es[tag].add(record_time, record)
+        @tag_offset_checkpoint[msg.topic] = msg.offset
       rescue => e
         log.warn "parser error in #{batch.topic}/#{batch.partition}", :error => e.to_s, :value => msg.value, :offset => msg.offset
         log.debug_backtrace
@@ -297,7 +299,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
     }
 
     unless es.empty?
-      es.each { |tag,es|
+      es.each { |tag, es|
         emit_events(tag, es)
       }
     end
@@ -337,6 +339,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
           }
         end
         es.add(record_time, record)
+        @tag_offset_checkpoint[msg.topic] = msg.offset
       rescue => e
         log.warn "parser error in #{batch.topic}/#{batch.partition}", :error => e.to_s, :value => msg.value, :offset => msg.offset
         log.debug_backtrace
@@ -355,7 +358,7 @@ class Fluent::KafkaGroupInput < Fluent::Input
           if @tag_source == :record
             process_batch_with_record_tag(batch)
           else
-            process_batch(batch) 
+            process_batch(batch)
           end
         }
       rescue ForShutdown
@@ -389,6 +392,9 @@ class Fluent::KafkaGroupInput < Fluent::Input
       else
         raise RuntimeError, "Exceeds retry_emit_limit"
       end
+    rescue => e
+      log.warn "tag checkpoint: #{@tag_offset_checkpoint[tag]}"
+      raise e
     end
   end
 end
